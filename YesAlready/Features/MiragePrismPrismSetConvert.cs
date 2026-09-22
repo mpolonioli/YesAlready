@@ -22,7 +22,7 @@ public class MiragePrismPrismSetConvert : AddonFeature
     protected override unsafe void HandleAddonEvent(AddonEvent eventType, AddonArgs addonInfo)
     {
         var addon = addonInfo.GetAddon<AddonMiragePrismPrismSetConvert>();
-        if (!addon->AtkUnitBase.IsAddonReady()) return;
+        if (!addon->AtkUnitBase.IsAddonReady() || addon->AtkValues == null) return;
 
         if (addon->AlreadyInDresserText != null && addon->AlreadyInDresserText->AtkResNode.IsVisible())
         {
@@ -42,22 +42,42 @@ public class MiragePrismPrismSetConvert : AddonFeature
         if (flags.Any(f => f == ItemFlag.Missing) && !C.AllowPartialFilling)
             return;
 
-        for (var i = 0; i < itemCount; i++)
-        {
-            if (flags[i] is not ItemFlag.Unfilled)
-                continue;
+        var toFill = Enumerable.Range(0, itemCount).Where(i => flags[i] == ItemFlag.Unfilled).ToArray();
 
-            var s = i;
-            var iconId = iconIds[i];
+        if (toFill.Length == 0 && flags.Any(f => f == ItemFlag.Missing))
+            return;
+        if (toFill.Length == 0 && flags.None(f => f is ItemFlag.Filled or ItemFlag.AlreadyInOutfit))
+            return;
+
+        if (Service.TaskManager.IsBusy) return;
+
+        foreach (var s in toFill)
+        {
+            var iconId = iconIds[s];
             Service.TaskManager.Enqueue(() => TryHandOver(addon, s, iconId), $"HandInSlot{s}");
-            Service.TaskManager.Enqueue(() => (ItemFlag)addon->TypedAtkValues->Items[s].Flag.UInt == ItemFlag.Filled);
+            Service.TaskManager.Enqueue(() => addon->AtkValues != null && (ItemFlag)addon->TypedAtkValues->Items[s].Flag.UInt is ItemFlag.Filled or ItemFlag.AlreadyInOutfit);
         }
 
-        Service.TaskManager.Enqueue(() => addon->StoreAsGlamourButton->Click());
+        Service.TaskManager.Enqueue(() =>
+        {
+            if (addon->AtkValues == null) return false;
+
+            var count = (int)AgentMiragePrismPrismSetConvert.Instance()->Data->NumItemsInSet;
+            for (var i = 0; i < count; i++)
+                if ((ItemFlag)addon->TypedAtkValues->Items[i].Flag.UInt == ItemFlag.Unfilled)
+                    return false; // more slots to fill
+
+            var btn = addon->StoreAsGlamourButton;
+            if (btn == null || !btn->IsEnabled) return false;
+            btn->Click();
+            return true;
+        });
     }
 
     private static unsafe bool? TryHandOver(AddonMiragePrismPrismSetConvert* addon, int slot, uint itemIconId)
     {
+        if (addon->AtkValues == null) return false;
+
         var flag = (ItemFlag)addon->TypedAtkValues->Items[slot].Flag.UInt;
         if (flag is ItemFlag.Filled or ItemFlag.AlreadyInOutfit)
             return true;
